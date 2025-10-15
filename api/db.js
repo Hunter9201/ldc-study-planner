@@ -1,32 +1,92 @@
+// Simple file-based database for Vercel serverless functions
 const fs = require('fs');
+const path = require('path');
 const bcrypt = require('bcryptjs');
 
-const dataPath = '/tmp/students.json';
+// Use /tmp directory which is writable in Vercel
+const DATA_FILE = '/tmp/ldc_students_data.json';
 
-function initData() {
-  if (!fs.existsSync(dataPath)) {
-    fs.writeFileSync(dataPath, JSON.stringify({ students: [], studentData: [] }));
+// Initialize data file
+function initDataFile() {
+  if (!fs.existsSync(DATA_FILE)) {
+    const initialData = {
+      students: [],
+      studentData: [],
+      lastCleanup: new Date().toISOString()
+    };
+    fs.writeFileSync(DATA_FILE, JSON.stringify(initialData, null, 2));
+    console.log('Initialized new data file');
   }
 }
 
+// Read data from file
 function readData() {
-  initData();
-  const data = fs.readFileSync(dataPath, 'utf8');
-  return JSON.parse(data);
+  try {
+    initDataFile();
+    const data = fs.readFileSync(DATA_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Error reading data file:', error);
+    // Return empty data structure if file is corrupted
+    return { students: [], studentData: [], lastCleanup: new Date().toISOString() };
+  }
 }
 
+// Write data to file
 function writeData(data) {
-  initData();
-  fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
+  try {
+    initDataFile();
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+    return true;
+  } catch (error) {
+    console.error('Error writing data file:', error);
+    return false;
+  }
 }
 
+// Clean up old data (optional maintenance)
+function cleanupOldData() {
+  const data = readData();
+  const now = new Date();
+  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  
+  // Only cleanup once per day
+  const lastCleanup = new Date(data.lastCleanup);
+  if (now.getTime() - lastCleanup.getTime() < 24 * 60 * 60 * 1000) {
+    return;
+  }
+  
+  // Remove students older than 30 days with no activity
+  data.students = data.students.filter(student => {
+    const studentData = data.studentData.find(sd => sd.studentId === student.id);
+    if (!studentData) return false;
+    
+    const lastUpdated = new Date(studentData.lastUpdated);
+    return now.getTime() - lastUpdated.getTime() < 30 * 24 * 60 * 60 * 1000;
+  });
+  
+  // Remove orphaned student data
+  data.studentData = data.studentData.filter(studentData => 
+    data.students.some(student => student.id === studentData.studentId)
+  );
+  
+  data.lastCleanup = now.toISOString();
+  writeData(data);
+}
+
+// Student management functions
 async function createStudent(studentData) {
   const { username, password, email, full_name } = studentData;
   const data = readData();
   
+  // Check if user already exists
+  if (data.students.find(s => s.username === username)) {
+    throw new Error('User already exists');
+  }
+  
   const passwordHash = await bcrypt.hash(password, 10);
   const student = {
-    id: Date.now().toString(),
+    id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
     username,
     password_hash: passwordHash,
     email,
@@ -35,13 +95,34 @@ async function createStudent(studentData) {
   };
   
   data.students.push(student);
-  writeData(data);
-  return student;
+  
+  // Create initial student data record
+  const studentDataRecord = {
+    studentId: student.id,
+    progress: {},
+    studyPlan: [],
+    lastUpdated: new Date().toISOString()
+  };
+  
+  data.studentData.push(studentDataRecord);
+  
+  if (writeData(data)) {
+    // Run cleanup in background (non-blocking)
+    setTimeout(cleanupOldData, 100);
+    return student;
+  } else {
+    throw new Error('Failed to save student data');
+  }
 }
 
 function findStudentByUsername(username) {
   const data = readData();
   return data.students.find(s => s.username === username);
+}
+
+function findStudentById(studentId) {
+  const data = readData();
+  return data.students.find(s => s.id === studentId);
 }
 
 async function verifyPassword(password, hash) {
@@ -51,14 +132,39 @@ async function verifyPassword(password, hash) {
 function getStudentData(studentId) {
   const data = readData();
   const studentData = data.studentData.find(sd => sd.studentId === studentId);
-  return studentData || { progress: {}, studyPlan: [], lastUpdated: new Date().toISOString() };
+  
+  if (studentData) {
+    return {
+      progress: studentData.progress || {},
+      studyPlan: studentData.studyPlan || [],
+      lastUpdated: studentData.lastUpdated
+    };
+  }
+  
+  // Return default data if not found
+  return {
+    progress: {},
+    studyPlan: [],
+    lastUpdated: new Date().toISOString()
+  };
 }
 
 async function saveStudentData(studentId, progress, studyPlan) {
   const data = readData();
+  
+  // Verify student exists
+  if (!data.students.find(s => s.id === studentId)) {
+    throw new Error('Student not found');
+  }
+  
   const existingIndex = data.studentData.findIndex(sd => sd.studentId === studentId);
   
-  const studentData = { studentId, progress: progress || {}, studyPlan: studyPlan || [], lastUpdated: new Date().toISOString() };
+  const studentData = {
+    studentId,
+    progress: progress || {},
+    studyPlan: studyPlan || [],
+    lastUpdated: new Date().toISOString()
+  };
   
   if (existingIndex >= 0) {
     data.studentData[existingIndex] = studentData;
@@ -66,7 +172,29 @@ async function saveStudentData(studentId, progress, studyPlan) {
     data.studentData.push(studentData);
   }
   
-  writeData(data);
+  if (writeData(data)) {
+    return true;
+  } else {
+    throw new Error('Failed to save student data');
+  }
 }
 
-module.exports = { createStudent, findStudentByUsername, verifyPassword, getStudentData, saveStudentData };
+// Get system stats (for debugging)
+function getSystemStats() {
+  const data = readData();
+  return {
+    totalStudents: data.students.length,
+    totalStudentData: data.studentData.length,
+    lastCleanup: data.lastCleanup
+  };
+}
+
+module.exports = {
+  createStudent,
+  findStudentByUsername,
+  findStudentById,
+  verifyPassword,
+  getStudentData,
+  saveStudentData,
+  getSystemStats
+};
