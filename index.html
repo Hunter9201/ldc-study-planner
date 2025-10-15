@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Countdown — LDC Study Planner</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+  /* Your existing CSS styles here */
+  body { 
+    background-color: #f8fafc; 
+    font-family: 'Inter', sans-serif;
+    transition: background-color 0.3s, color 0.3s;
+    overflow-x: hidden;
+  }
+  .progress-bar { 
+    height: 10px; 
+    border-radius: 6px; 
+    background: #e5e7eb; 
+    overflow: hidden; 
+  }
+  .progress-inner { 
+    height: 100%; 
+    background: linear-gradient(to right, #4f46e5, #9333ea); 
+    transition: width 0.5s ease; 
+  }
+  .dark-mode { 
+    background-color: #1f2937; 
+    color: #f9fafb; 
+  }
+  /* Add all your other CSS styles from your original code */
+</style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+<!-- Login Screen -->
+<div id="loginScreen" class="login-container">
+  <!-- Your existing login HTML -->
+</div>
+
+<!-- Countdown Screen -->
+<div id="countdownScreen" class="countdown-container hidden">
+  <!-- Your existing countdown HTML -->
+</div>
+
+<!-- Main Application -->
+<div id="appContainer" class="app-container hidden">
+  <!-- Your existing main app HTML -->
+</div>
+
+<script>
+// === BACKEND CONFIGURATION ===
+const API_BASE = 'https://ldc-study-planner.vercel.app/api';
+
+// Your existing JavaScript code goes here, but REPLACE the user management functions:
+
+// === REPLACE THESE FUNCTIONS ===
+async function registerUser(name, email, password) {
+    try {
+        const response = await fetch(API_BASE + '/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                username: email, 
+                password: password, 
+                email: email, 
+                full_name: name 
+            })
+        });
+        return await response.json();
+    } catch (error) {
+        console.error('Registration error:', error);
+        return { success: false, error: 'Network error' };
+    }
+}
+
+async function loginUser(email, password) {
+    try {
+        const response = await fetch(API_BASE + '/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: email, password: password })
+        });
+        return await response.json();
+    } catch (error) {
+        console.error('Login error:', error);
+        return { success: false, error: 'Network error' };
+    }
+}
+
+async function saveUserData(studentId, progress, studyPlan) {
+    try {
+        const response = await fetch(API_BASE + '/save-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId, progress, studyPlan })
+        });
+        return await response.json();
+    } catch (error) {
+        console.error('Save error:', error);
+        return { success: false, error: 'Network error' };
+    }
+}
+
+// Update handleRegister function
+async function handleRegister() {
+    const name = document.getElementById('registerName').value;
+    const email = document.getElementById('registerEmail').value;
+    const password = document.getElementById('registerPassword').value;
+    
+    if (!name || !email || !password) {
+        showAuthError('Please fill in all fields', 'registerForm');
+        return;
+    }
+    
+    if (password.length < 6) {
+        showAuthError('Password must be at least 6 characters long', 'registerForm');
+        return;
+    }
+    
+    const result = await registerUser(name, email, password);
+    
+    if (result.success) {
+        // Auto-login after registration
+        const loginResult = await loginUser(email, password);
+        if (loginResult.success) {
+            currentUser = loginResult.student;
+            studyPlan = loginResult.studyPlan || [];
+            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+            showCountdownScreen();
+        }
+    } else {
+        showAuthError(result.error, 'registerForm');
+    }
+}
+
+// Update handleLogin function
+async function handleLogin() {
+    const email = document.getElementById('loginEmail').value;
+    const password = document.getElementById('loginPassword').value;
+    
+    if (!email || !password) {
+        showAuthError('Please enter both email and password', 'loginForm');
+        return;
+    }
+    
+    const result = await loginUser(email, password);
+    
+    if (result.success) {
+        currentUser = result.student;
+        studyPlan = result.studyPlan || [];
+        localStorage.setItem('currentUser', JSON.stringify(currentUser));
+        showCountdownScreen();
+    } else {
+        showAuthError(result.error, 'loginForm');
+    }
+}
+
+// Add this function to get current progress
+function getCurrentProgress() {
+    // This should return an object with all the user's progress
+    // For now, return an empty object - you'll implement this based on your app
+    return {};
+}
+
+// Add auto-save function
+function setupAutoSave() {
+    // Auto-save every 2 minutes
+    setInterval(async () => {
+        if (currentUser) {
+            const userProgress = getCurrentProgress();
+            await saveUserData(currentUser.id, userProgress, studyPlan);
+            console.log('Auto-saved to server');
+        }
+    }, 120000);
+    
+    // Save when page closes
+    window.addEventListener('beforeunload', async () => {
+        if (currentUser) {
+            const userProgress = getCurrentProgress();
+            await saveUserData(currentUser.id, userProgress, studyPlan);
+        }
+    });
+}
+
+// Initialize the app
+function init() {
+    // Your existing init code
+    setupAutoSave(); // Add this line
+}
+
+// Make sure to call init when DOM loads
+document.addEventListener('DOMContentLoaded', init);
+
+// Your existing JavaScript continues here...
+</script>
+</body>
+</html>
