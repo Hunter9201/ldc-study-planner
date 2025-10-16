@@ -1,1 +1,11 @@
-2
+# Delete the file locally
+git rm filename.txt
+
+# Or if you want to keep the file locally but remove it from the repository
+git rm --cached filename.txt
+
+# Commit the deletion
+git commit -m "Remove filename.txt"
+
+# Push to remote repository
+git push origin main2
